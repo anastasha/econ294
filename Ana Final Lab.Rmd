@@ -1,0 +1,238 @@
+---
+title: "Final Exam R"
+author: "Ana Frandell"
+date: "March 16, 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(cache = TRUE)
+```
+
+```{r package-loading, echo=FALSE, message=FALSE}
+library("dplyr") 
+library("RSQLite") 
+library("nycflights13") 
+library("ggplot2")
+library("magrittr")
+library("reshape2")
+```
+
+```{r echo=FALSE, message=FALSE}
+my_db <- nycflights13_sqlite()
+flights_sqlite <- tbl(my_db, "flights")
+weather_sqlite <- tbl(my_db, "weather")
+airports_sqlite<- tbl(my_db, "airports")
+planes_sqlite  <- tbl(my_db, "planes")
+airlines_sqlite<-tbl(my_db, "airlines")
+```
+
+# Use date from NCY Flights 13
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+flights<- data.frame(flights_sqlite, header=TRUE)
+weather<- data.frame(weather_sqlite, header=TRUE)
+airport <- data.frame(airports_sqlite, header=TRUE)
+planes<- data.frame(planes_sqlite, header=TRUE)
+airlines <-data.frame(airlines_sqlite, header=TRUE)
+```
+
+```{r echo=FALSE, message=F, warning=F}
+flights$can <- ifelse(is.na(flights$arr_time), 1, 0)
+#generate dummy variable for canceled flights
+```
+
+```{r echo=FALSE, message=F, warning=F}
+plane.flight <- left_join((flights), (planes), by = "tailnum")
+airp.flight <-  left_join(flights, airports, by = c("dest"= "faa"))
+a.p.f <- left_join(airp.flight, planes, by ="tailnum")
+
+flights <- flights %>%
+  mutate(
+    date = as.Date(paste(month, year, day, hour, sep = "."), format = "%m.%Y.%d.%H")
+  )
+weather.f <- left_join(flights, weather,
+                       by=c("year", "month", "day", "hour"))
+#combine, mutate, merge data
+```
+
+## Part A - Weather 
+
+```{r echo=FALSE, message=F, warning=F}
+lm(weather.f$can ~ weather.f$humid)
+weather.reg <- lm(weather.f$can ~ weather.f$humid + weather.f$wind_speed + weather.f$precip + weather.f$temp)
+```
+
+```{r echo=TRUE, message=F, warning=F}
+summary(weather.reg)
+```
+
+The results from this regression shows that humidity and temperature are statistically significant variables that help explain how the weather impacts canceled calls. 
+
+
+```{r echo=TRUE, message=F, warning=F}
+desc<-arrange(weather.f, desc(dep_delay))
+head(desc$temp, 10)
+```
+
+Top 10 delayed flights by tempurature
+
+```{r echo=TRUE, message=F, warning=F}
+head(desc$wind_gust, n=10)
+```
+
+Top 10 delayed flights by wind gust 
+
+
+## Part B - Aspects of Time 
+
+```{r echo=FALSE, message=FALSE, warning=F, fig.cap = "Departure Delay by Arrival Times, ggplot"}
+minute.delay<-ggplot(flights, 
+             aes(x=dep_delay, y=air_time))
+minute.delay+geom_point(aes(colour=origin, alpha=0.5))
+```
+
+This plot shows that less air time shows that the flight is less likely to have a departure delay. 
+
+
+```{r echo=FALSE, message=F, warning=F, fig.cap = "Departure Delay by Departure Times, ggplot"}
+minute.delay<-ggplot(flights, 
+                     aes(x=dep_delay, y=dep_time))
+minute.delay+geom_point(aes(colour=origin, alpha=0.5))
+```
+
+Depending on the origin, the flights that depart later in the day are more likely to experience departure delay.  
+
+```{r echo=FALSE, warning=F, message=F}
+flights.summary<- flights %>%
+  dplyr::group_by(minute) %>%
+  dplyr::summarise(
+    flight.cancled.n = sum(can, na.rm= TRUE),
+    flights.delay.n = sum(dep_delay, na.rm= TRUE),
+    delay.min = min(dep_delay, na.rm = TRUE),
+    delay.mean = mean(dep_delay, na.rm = TRUE),
+    delay.median = median(dep_delay, na.rm = TRUE),
+    delay.max = max(dep_delay, na.rm = TRUE)
+  )
+```
+
+```{r echo=TRUE}
+summary(flights.summary)
+```
+
+
+```{r echo=TRUE, message=F, warning=F}
+hour.reg <- (lm(weather.f$can ~ weather.f$hour))
+```
+
+```{r echo=TRUE, message=F, warning=F}
+summary(hour.reg)
+```
+
+This regression results shows that hours is not a statistically significant determinant for canceled flights.  
+
+```{r echo=TRUE, message=F, warning=F}
+fl.m <-flights %>%
+  dplyr::group_by(year, month) %>%     
+  dplyr::summarize(
+    delay.min = min(dep_delay, na.rm = TRUE),
+    delay.mean = mean(dep_delay, na.rm = TRUE),
+    delay.max = max(dep_delay, na.rm = TRUE)
+  )
+fl.m$date<- as.Date(paste(fl.m$month, fl.m$year, "01", sep="."), format = "%m.%Y.%d")
+ggplot(data=fl.m, aes(x=date, y=delay.mean)) + geom_line()
+```
+
+This plot shows that the average number of delayed flights increases drastically during the begining of summer and declines immediately in July.  
+
+```{r echo=FALSE}
+plot(fl.m$delay.max, type ='l', col='blue', xlab="Date", ylab="Departure Delay")
+```
+
+This plot shows the maximum amount of delayed departures over the span of 1 year. 
+
+```{r echo=FALSE}
+par(mfrow=c(2,2))
+plot(fl.m$delay.mean, type = 'l', xlab="Date", ylab="Departure Delay")
+plot(fl.m$delay.min, type ='l', col='red', xlab="Date", ylab="Departure Delay")
+```
+
+These graphs compare the average amount of departure delayed flights and the minimum over time.  
+
+## Part C - Airport Destination 
+
+```{r echo=FALSE, warning=F, message=F, fig.cap = "Average Delayed Departures, ggplot"}
+org.2 <-airp.flight %>%
+  dplyr::group_by(year, month, dest) %>%     #group by 3 different variables 
+  dplyr::summarize(
+    air_mean= mean(dep_delay, na.rm=TRUE)
+  )
+org.2$date<- as.Date(paste(org.2$month, org.2$year, "01", sep="."), format = "%m.%Y.%d")
+ggplot(data=org.2, aes(x=date, y=air_mean, group = dest, colour = dest)) + geom_line()
+```
+
+This graphs shows where some locations experience peaks in their average number of delayed flights.  
+
+```{r echo=FALSE, warning=F, message=F, fig.cap = "Departure Delay by Destination, ggplot"}
+destination.delay<-ggplot(weather.f, 
+                     aes(x=dest, y=dep_delay))
+destination.delay+geom_point()
+destination.delay+geom_point(aes(colour=dest, alpha=0.5))
+
+```
+
+
+THis graphs appears to show a unifrom distribution for departure delays and destination.  
+
+```{r echo=FALSE, warning=F, message=F}
+dest.can.reg <- lm(a.p.f$can ~ a.p.f$dest)
+```
+
+```{r echo=FALSE, warning=F, message=F}
+summary(dest.can.reg)
+```
+
+The regression ressults shows where destination is a statistically significant variable for explaining canceled flights. 
+
+
+#Part D - Characteristics of Plane
+
+```{r echo=FALSE, warning=F, message=F}
+plane.seats<-ggplot(plane.flight, 
+                     aes(x=seats, y=dep_delay))
+plane.seats+geom_point(aes(colour=origin, alpha=0.5))
+```
+
+This graph suggests a uniform distribution for the number of seats of a plane and the number of delayed departures.  The observations are identified by origin.  
+
+```{r echo=FALSE, warning=F, message=F}
+eng.can <- lm(plane.flight$can ~ plane.flight$engines)
+summary(eng.can)
+```
+
+The regression results shows that the number of engines in the plane has a negative relationship with canceled flights.  
+
+```{r echo=FALSE, warning=F, message=F}
+eng.delay <- lm(plane.flight$dep_delay ~ plane.flight$engines)
+summary(eng.delay)
+```
+
+The regression results shows that the number of engines in the plane has a positive relationship with delayed departures.  
+
+
+```{r echo=FALSE, warning=F, message=F}
+desc.type<-arrange(plane.flight, desc(dep_delay))
+desc.flight<-arrange(flights, desc(dep_delay))
+```
+```{r echo=F, message=F, warning=F}
+head(desc.type$seats, 10)
+```
+
+Number of seats on the top 10 delayed departure flights 
+
+```{r echo=FALSE, warning=F, message=F}
+head(desc.type$carrier, n=10)
+```
+
+Carriers of top 10 delayed departure flights.  
